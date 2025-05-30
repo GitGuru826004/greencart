@@ -20,7 +20,7 @@ await connectDB();
 await connectCloudinary();
 
 // Allow multiple origins
-const allowedOrigins = ['http://localhost:5173','https://vercel.com/anupamgarg2005-gmailcoms-projects/greencart/C2YwBGvs25LK5kbdKbEj2FwYmSFp','https://greencart-gamma.vercel.app/'];
+const allowedOrigins = ['http://localhost:5173','https://greencart-gamma.vercel.app/'];
 
 // ✅ CRITICAL: Stripe webhook MUST be before express.json() middleware
 // This endpoint needs raw body data for signature verification
@@ -30,7 +30,13 @@ app.post('/api/order/webhook', express.raw({type: 'application/json'}), stripeWe
 app.use(express.json());
 app.use(cookieParser());
 app.use(cors({
-  origin: allowedOrigins, 
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 
