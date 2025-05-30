@@ -24,7 +24,7 @@ const allowedOrigins = ['http://localhost:5173'];
 
 // ✅ CRITICAL: Stripe webhook MUST be before express.json() middleware
 // This endpoint needs raw body data for signature verification
-app.post('/stripe', express.raw({type: 'application/json'}), stripeWebhooks);
+app.post('/api/order/webhook', express.raw({type: 'application/json'}), stripeWebhooks);
 
 // Now apply other middleware
 app.use(express.json());
@@ -33,12 +33,6 @@ app.use(cors({
   origin: allowedOrigins, 
   credentials: true
 }));
-
-// Add webhook debugging
-app.use('/stripe', (req, res, next) => {
-  console.log('Stripe webhook hit!');
-  next();
-});
 
 app.get('/', (req, res) => {
   res.send('API is working');
@@ -64,7 +58,7 @@ app.use((error, req, res, next) => {
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
-    console.log('Stripe webhook endpoint: http://localhost:4000/stripe');
+    console.log('Stripe webhook endpoint: http://localhost:4000/api/order/webhook');
   });
 }
 

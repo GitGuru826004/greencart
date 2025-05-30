@@ -194,11 +194,18 @@ export const placeOrderstripe = async (req, res) => {
 };
 
 // Stripe webhooks - FIXED VERSION
+// Stripe webhooks - Enhanced with debugging
 export const stripeWebhooks = async (request, response) => {
-    console.log('Webhook received!');
+    console.log('🔔 Webhook received!');
+    console.log('Headers:', JSON.stringify(request.headers, null, 2));
     
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
     const sig = request.headers["stripe-signature"];
+    
+    if (!sig) {
+        console.log('❌ No Stripe signature found in headers');
+        return response.status(400).send('No Stripe signature');
+    }
     
     let event;
 
@@ -208,13 +215,14 @@ export const stripeWebhooks = async (request, response) => {
             sig,
             process.env.STRIPE_WEBHOOK_SECRET
         );
-        console.log('Webhook signature verified successfully');
+        console.log('✅ Webhook signature verified successfully');
     } catch (error) {
         console.log('❌ Webhook signature verification failed:', error.message);
         return response.status(400).send(`Webhook Error: ${error.message}`);
     }
 
-    console.log('Processing event:', event.type);
+    console.log('🔄 Processing event:', event.type);
+    console.log('Event data:', JSON.stringify(event.data.object, null, 2));
 
     // Handle the event
     try {
@@ -225,31 +233,64 @@ export const stripeWebhooks = async (request, response) => {
 
                 console.log('✅ Payment successful for order:', orderId);
                 console.log('Session payment_status:', session.payment_status);
+                console.log('Metadata:', { orderId, userId });
 
                 if (!orderId || !userId) {
                     console.log('❌ Missing metadata:', { orderId, userId });
-                    break;
+                    return response.status(400).json({ 
+                        error: 'Missing required metadata',
+                        received: false 
+                    });
                 }
+
+                // Check if order exists first
+                const existingOrder = await Order.findById(orderId);
+                if (!existingOrder) {
+                    console.log('❌ Order not found:', orderId);
+                    return response.status(404).json({ 
+                        error: 'Order not found',
+                        received: false 
+                    });
+                }
+
+                console.log('📋 Order before update:', {
+                    id: existingOrder._id,
+                    isPaid: existingOrder.isPaid,
+                    paymentType: existingOrder.paymentType
+                });
 
                 // Mark payment as successful
                 const updatedOrder = await Order.findByIdAndUpdate(
                     orderId, 
                     { 
                         isPaid: true,
-                        stripeSessionId: session.id 
+                        stripeSessionId: session.id,
+                        status: 'confirmed' // Add status update
                     },
                     { new: true }
                 );
 
                 if (updatedOrder) {
-                    console.log('✅ Order updated successfully:', updatedOrder._id);
+                    console.log('✅ Order updated successfully:', {
+                        id: updatedOrder._id,
+                        isPaid: updatedOrder.isPaid,
+                        status: updatedOrder.status
+                    });
                 } else {
-                    console.log('❌ Order not found:', orderId);
+                    console.log('❌ Failed to update order:', orderId);
+                    return response.status(500).json({ 
+                        error: 'Failed to update order',
+                        received: false 
+                    });
                 }
 
                 // Clear user cart
-                await User.findByIdAndUpdate(userId, { cartItems: {} });
-                console.log('✅ Cart cleared for user:', userId);
+                const userUpdate = await User.findByIdAndUpdate(userId, { cartItems: {} });
+                if (userUpdate) {
+                    console.log('✅ Cart cleared for user:', userId);
+                } else {
+                    console.log('⚠️ Failed to clear cart for user:', userId);
+                }
                 break;
             }
 
@@ -268,17 +309,19 @@ export const stripeWebhooks = async (request, response) => {
             }
 
             default:
-                console.log(`Unhandled event type: ${event.type}`);
+                console.log(`ℹ️ Unhandled event type: ${event.type}`);
                 break;
         }
 
-        response.json({ received: true });
+        console.log('✅ Webhook processed successfully');
+        response.json({ received: true, processed: true });
 
     } catch (error) {
         console.log('❌ Error processing webhook:', error);
-        console.log('Error details:', error.message);
+        console.log('Error stack:', error.stack);
         response.status(500).json({ 
             error: 'Webhook processing failed',
+            message: error.message,
             received: false 
         });
     }
