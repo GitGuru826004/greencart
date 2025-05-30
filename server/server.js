@@ -20,7 +20,7 @@ await connectDB();
 await connectCloudinary();
 
 // Allow multiple origins
-const allowedOrigins = ['http://localhost:5173','https://vercel.com/anupamgarg2005-gmailcoms-projects/greencart/C2YwBGvs25LK5kbdKbEj2FwYmSFp'];
+const allowedOrigins = ['http://localhost:5173','https://vercel.com/anupamgarg2005-gmailcoms-projects/greencart/C2YwBGvs25LK5kbdKbEj2FwYmSFp','https://greencart-gamma.vercel.app/'];
 
 // ✅ CRITICAL: Stripe webhook MUST be before express.json() middleware
 // This endpoint needs raw body data for signature verification
