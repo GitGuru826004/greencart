@@ -12,26 +12,39 @@ import addressRouter from './routes/addressRoute.js';
 import orderRouter from './routes/orderRoute.js';
 import { stripeWebhooks } from './controllers/orderController.js';
 
-
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-await connectDB()
-await connectCloudinary()
+// Connect to database and cloudinary FIRST
+await connectDB();
+await connectCloudinary();
 
-//Allow multiple origins
+// Allow multiple origins
 const allowedOrigins = ['http://localhost:5173'];
 
+// ✅ CRITICAL: Stripe webhook MUST be before express.json() middleware
+// This endpoint needs raw body data for signature verification
 app.post('/stripe', express.raw({type: 'application/json'}), stripeWebhooks);
 
+// Now apply other middleware
 app.use(express.json());
 app.use(cookieParser());
-app.use(cors({origin: allowedOrigins, credentials: true}));
+app.use(cors({
+  origin: allowedOrigins, 
+  credentials: true
+}));
+
+// Add webhook debugging
+app.use('/stripe', (req, res, next) => {
+  console.log('Stripe webhook hit!');
+  next();
+});
 
 app.get('/', (req, res) => {
   res.send('API is working');
-  
 });
+
+// API routes
 app.use('/api/user', userRouter);
 app.use('/api/seller', sellerRouter);
 app.use('/api/product', productRouter);
@@ -39,12 +52,20 @@ app.use('/api/cart', cartRouter);
 app.use('/api/address', addressRouter);
 app.use('/api/order', orderRouter);
 
+// Add error handling middleware
+app.use((error, req, res, next) => {
+  console.error('Server error:', error);
+  res.status(500).json({
+    success: false,
+    message: 'Internal server error'
+  });
+});
+
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
+    console.log('Stripe webhook endpoint: http://localhost:4000/stripe');
   });
 }
 
 export default app;
-
-// dekte hain kaam karta hai?

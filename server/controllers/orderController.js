@@ -2,7 +2,7 @@
 import Product from "../models/Product.js";
 import Order from "../models/Order.js";
 import User from "../models/User.js";
-import Stripe from 'stripe'; // Fixed: Capital S and proper import
+import Stripe from 'stripe';
 
 export const placeOrderCOD = async (req, res) => {
   try {
@@ -51,8 +51,8 @@ export const placeOrderCOD = async (req, res) => {
       isPaid: false,
     });
 
-    // Clear cart items (assuming in User model)
-    await User.findByIdAndUpdate(userId, { cartItems: [] });
+    // Clear cart items
+    await User.findByIdAndUpdate(userId, { cartItems: {} });
 
     return res.json({
       success: true,
@@ -74,6 +74,8 @@ export const placeOrderstripe = async (req, res) => {
   try {
     const { userId, items, address } = req.body;
     const { origin } = req.headers;
+
+    console.log('Stripe order request:', { userId, itemsCount: items?.length, origin });
 
     // Input validation
     if (!address || !items || items.length === 0) {
@@ -104,7 +106,6 @@ export const placeOrderstripe = async (req, res) => {
         });
       }
 
-      // Fixed: Add to productData after validation
       productData.push({
         name: product.name,
         price: product.offerPrice,
@@ -118,7 +119,7 @@ export const placeOrderstripe = async (req, res) => {
     const tax = Math.floor(amount * 0.02);
     const totalAmount = amount + tax;
 
-    // Create order
+    // Create order FIRST
     const order = await Order.create({
       userId,
       items,
@@ -128,10 +129,12 @@ export const placeOrderstripe = async (req, res) => {
       isPaid: false,
     });
 
-    // Fixed: Initialize Stripe correctly
+    console.log('Order created:', order._id);
+
+    // Initialize Stripe
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-    // Fixed: Create line items for stripe (removed double tax calculation)
+    // Create line items for stripe
     const line_items = productData.map((item) => {
       return {
         price_data: {
@@ -139,7 +142,7 @@ export const placeOrderstripe = async (req, res) => {
           product_data: {
             name: item.name,
           },
-          unit_amount: Math.floor(item.price * 100), // Fixed: Remove double tax
+          unit_amount: Math.floor(item.price * 100),
         },
         quantity: item.quantity,
       };
@@ -157,25 +160,27 @@ export const placeOrderstripe = async (req, res) => {
       quantity: 1,
     });
 
-    // Fixed: Create session (sessions plural and metadata spelling)
+    // Create Stripe session
     const session = await stripe.checkout.sessions.create({
       line_items,
       mode: "payment",
       success_url: `${origin}/loader?next=my-orders`,
       cancel_url: `${origin}/cart`,
-      metadata: { // Fixed: metadata not metaData
+      metadata: {
         orderId: order._id.toString(),
-        userId,
+        userId: userId.toString(),
       }
     });
 
-    // Clear cart items
-    await User.findByIdAndUpdate(userId, { cartItems: [] });
+    console.log('Stripe session created:', session.id);
+
+    // DON'T clear cart here - wait for webhook confirmation
+    // await User.findByIdAndUpdate(userId, { cartItems: {} });
 
     return res.json({
       success: true,
       url: session.url,
-      message: "Order placed successfully",
+      message: "Redirecting to payment...",
       order,
     });
 
@@ -188,11 +193,13 @@ export const placeOrderstripe = async (req, res) => {
   }
 };
 
-// Stripe webhooks
+// Stripe webhooks - FIXED VERSION
 export const stripeWebhooks = async (request, response) => {
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY); // Fixed import
-
+    console.log('Webhook received!');
+    
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
     const sig = request.headers["stripe-signature"];
+    
     let event;
 
     try {
@@ -201,36 +208,62 @@ export const stripeWebhooks = async (request, response) => {
             sig,
             process.env.STRIPE_WEBHOOK_SECRET
         );
+        console.log('Webhook signature verified successfully');
     } catch (error) {
-        console.log('Webhook signature verification failed:', error.message);
-        return response.status(400).send(`Webhook Error: ${error.message}`); // Added return
+        console.log('❌ Webhook signature verification failed:', error.message);
+        return response.status(400).send(`Webhook Error: ${error.message}`);
     }
+
+    console.log('Processing event:', event.type);
 
     // Handle the event
     try {
         switch (event.type) {
-            case "checkout.session.completed": { // Fixed event type
+            case "checkout.session.completed": {
                 const session = event.data.object;
                 const { orderId, userId } = session.metadata;
 
-                console.log('Payment successful for order:', orderId);
+                console.log('✅ Payment successful for order:', orderId);
+                console.log('Session payment_status:', session.payment_status);
+
+                if (!orderId || !userId) {
+                    console.log('❌ Missing metadata:', { orderId, userId });
+                    break;
+                }
 
                 // Mark payment as successful
-                await Order.findByIdAndUpdate(orderId, { isPaid: true });
+                const updatedOrder = await Order.findByIdAndUpdate(
+                    orderId, 
+                    { 
+                        isPaid: true,
+                        stripeSessionId: session.id 
+                    },
+                    { new: true }
+                );
 
-                // Clear user cart (already cleared during order placement, but double-check)
+                if (updatedOrder) {
+                    console.log('✅ Order updated successfully:', updatedOrder._id);
+                } else {
+                    console.log('❌ Order not found:', orderId);
+                }
+
+                // Clear user cart
                 await User.findByIdAndUpdate(userId, { cartItems: {} });
+                console.log('✅ Cart cleared for user:', userId);
                 break;
             }
 
-            case "checkout.session.expired": { // Fixed event type
+            case "checkout.session.expired": {
                 const session = event.data.object;
                 const { orderId } = session.metadata;
 
-                console.log('Payment session expired for order:', orderId);
+                console.log('⏰ Payment session expired for order:', orderId);
 
-                // Delete the unpaid order
-                await Order.findByIdAndDelete(orderId);
+                if (orderId) {
+                    // Delete the unpaid order
+                    await Order.findByIdAndDelete(orderId);
+                    console.log('🗑️ Expired order deleted:', orderId);
+                }
                 break;
             }
 
@@ -239,10 +272,11 @@ export const stripeWebhooks = async (request, response) => {
                 break;
         }
 
-        response.json({ received: true }); // Fixed typo
+        response.json({ received: true });
 
     } catch (error) {
-        console.log('Error processing webhook:', error);
+        console.log('❌ Error processing webhook:', error);
+        console.log('Error details:', error.message);
         response.status(500).json({ 
             error: 'Webhook processing failed',
             received: false 
@@ -250,14 +284,11 @@ export const stripeWebhooks = async (request, response) => {
     }
 }
 
-
-
-
 // Get orders by User ID : /api/order/user
 export const getUserOrders = async (req, res) => {
   try {
-    const userId = req.userId; // Use req.userId instead of req.user.id
-    console.log('userId from req.userId:', userId); // Debug
+    const userId = req.userId;
+    console.log('Getting orders for userId:', userId);
 
     const orders = await Order.find({
       userId,
@@ -270,7 +301,12 @@ export const getUserOrders = async (req, res) => {
       .populate("address")
       .sort({ createdAt: -1 });
 
-    console.log('Orders found:', orders.length); // Debug
+    console.log('Orders found:', orders.length);
+    console.log('Orders payment status:', orders.map(o => ({ 
+      id: o._id, 
+      paymentType: o.paymentType, 
+      isPaid: o.isPaid 
+    })));
 
     return res.json({
       success: true,
