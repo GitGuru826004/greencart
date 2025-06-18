@@ -5,7 +5,7 @@ GreenCart is an eco-friendly e-commerce platform designed for sustainable shoppi
 ---
 
 ## 🧠 Project Architecture
-
+![Project Architecture](client/src/assets/architecture.png)
 ```
 greencart/
 ├── client/                     # Frontend: React + Vite + Tailwind
